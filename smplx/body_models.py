@@ -398,6 +398,92 @@ class SMPL(nn.Module):
 
         return output
 
+    def forward_with_orientations(
+        self,
+        betas: Optional[Tensor] = None,
+        body_pose: Optional[Tensor] = None,
+        global_orient: Optional[Tensor] = None,
+        transl: Optional[Tensor] = None,
+        return_verts=True,
+        return_full_pose: bool = False,
+        pose2rot: bool = True,
+        **kwargs
+    ) -> SMPLOutput:
+        ''' Forward pass for the SMPL model
+
+            Parameters
+            ----------
+            global_orient: torch.tensor, optional, shape Bx3
+                If given, ignore the member variable and use it as the global
+                rotation of the body. Useful if someone wishes to predicts this
+                with an external model. (default=None)
+            betas: torch.tensor, optional, shape BxN_b
+                If given, ignore the member variable `betas` and use it
+                instead. For example, it can used if shape parameters
+                `betas` are predicted from some external model.
+                (default=None)
+            body_pose: torch.tensor, optional, shape Bx(J*3)
+                If given, ignore the member variable `body_pose` and use it
+                instead. For example, it can used if someone predicts the
+                pose of the body joints are predicted from some external model.
+                It should be a tensor that contains joint rotations in
+                axis-angle format. (default=None)
+            transl: torch.tensor, optional, shape Bx3
+                If given, ignore the member variable `transl` and use it
+                instead. For example, it can used if the translation
+                `transl` is predicted from some external model.
+                (default=None)
+            return_verts: bool, optional
+                Return the vertices. (default=True)
+            return_full_pose: bool, optional
+                Returns the full axis-angle pose vector (default=False)
+
+            Returns
+            -------
+        '''
+        # If no shape and pose parameters are passed along, then use the
+        # ones from the module
+        global_orient = (global_orient if global_orient is not None else
+                         self.global_orient)
+        body_pose = body_pose if body_pose is not None else self.body_pose
+        betas = betas if betas is not None else self.betas
+
+        apply_trans = transl is not None or hasattr(self, 'transl')
+        if transl is None and hasattr(self, 'transl'):
+            transl = self.transl
+
+        full_pose = torch.cat([global_orient, body_pose], dim=1)
+
+        batch_size = max(betas.shape[0], global_orient.shape[0],
+                         body_pose.shape[0])
+
+        if betas.shape[0] != batch_size:
+            num_repeats = int(batch_size / betas.shape[0])
+            betas = betas.expand(num_repeats, -1)
+
+        vertices, joints = lbs(betas, full_pose, self.v_template,
+                               self.shapedirs, self.posedirs,
+                               self.J_regressor, self.parents,
+                               self.lbs_weights, pose2rot=pose2rot)
+
+        joints = self.vertex_joint_selector(vertices, joints)
+        # Map the joints to the current dataset
+        if self.joint_mapper is not None:
+            joints = self.joint_mapper(joints)
+
+        if apply_trans:
+            joints += transl.unsqueeze(dim=1)
+            vertices += transl.unsqueeze(dim=1)
+
+        output = SMPLOutput(vertices=vertices if return_verts else None,
+                            global_orient=global_orient,
+                            body_pose=body_pose,
+                            joints=joints,
+                            betas=betas,
+                            full_pose=full_pose if return_full_pose else None)
+
+        return output
+
 
 class SMPLLayer(SMPL):
     def __init__(

@@ -59,6 +59,10 @@ class SMPLOutput(ModelOutput):
     betas: Optional[Tensor] = None
     body_pose: Optional[Tensor] = None
 
+@dataclass
+class SMPLOutputWithOrientations(SMPLOutput):
+    orientations: Optional[Tensor] = None
+
 
 @dataclass
 class SMPLHOutput(SMPLOutput):
